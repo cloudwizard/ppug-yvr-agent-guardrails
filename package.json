@@ -21,30 +21,30 @@
     "@cloudflare/ai-chat": "0.12.1",
     "@cloudflare/computer": "0.5.1",
     "@cloudflare/think": "0.21.0",
+    "@cloudflare/vite-plugin": "1.64.0",
     "@fontsource-variable/inter": "5.3.0",
     "@fontsource-variable/jetbrains-mono": "5.3.0",
     "@phosphor-icons/react": "2.1.10",
+    "@tailwindcss/vite": "4.3.3",
+    "@vitejs/plugin-react": "6.1.2",
     "agents": "0.29.0",
     "ai": "7.0.145",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "streamdown": "2.7.1",
+    "tailwindcss": "4.3.3",
+    "vite": "8.3.4",
+    "wrangler": "4.151.2",
     "zod": "4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.64.0",
     "@cloudflare/workers-types": "5.20261019.1",
-    "@tailwindcss/vite": "4.3.3",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.2.3",
-    "@vitejs/plugin-react": "6.1.2",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
-    "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
-    "vite": "8.3.4",
-    "vitest": "4.1.12",
-    "wrangler": "4.151.2"
+    "vitest": "4.1.12"
   }
 }
