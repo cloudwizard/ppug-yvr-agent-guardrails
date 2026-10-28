@@ -4,9 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "test -x node_modules/.bin/vite || npm install",
     "dev": "vite dev --port 3000 --host 0.0.0.0",
+    "prestart": "test -x node_modules/.bin/vite || npm install",
     "start": "vite dev --port 3000 --host 0.0.0.0",
+    "prebuild": "test -x node_modules/.bin/vite || npm install",
     "build": "vite build",
+    "predeploy": "test -x node_modules/.bin/vite || npm install",
     "deploy": "vite build && wrangler deploy",
     "types": "wrangler types env.d.ts --include-runtime false",
     "format": "oxfmt --write .",
