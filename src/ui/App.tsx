@@ -1,5 +1,11 @@
 import { useAgentChat } from "@cloudflare/ai-chat/react";
-import { ArrowsClockwise, Lightning, Sparkle } from "@phosphor-icons/react";
+import {
+  ArrowsClockwise,
+  Fire,
+  Lightning,
+  Sparkle,
+  Trophy,
+} from "@phosphor-icons/react";
 import { useAgent } from "agents/react";
 import type { FileUIPart } from "ai";
 import { useEffect, useRef, useState } from "react";
@@ -11,7 +17,7 @@ import {
   type ModelKey,
 } from "../shared";
 import { Composer, fileToPart } from "./Composer";
-import { SidebarExtras } from "./extensions";
+import { LiveAttackLeaderboardModal, SidebarExtras } from "./extensions";
 import { Message } from "./Message";
 import { cx } from "./primitives";
 import { TracePanel } from "./TracePanel";
@@ -49,6 +55,9 @@ function Workspace({
   const [state, setState] = useState<AgentState>(INITIAL_STATE);
   const [connected, setConnected] = useState(false);
   const [tab, setTab] = useState<"chat" | "trace">("chat");
+  const [arenaOpen, setArenaOpen] = useState(false);
+  const [highlightLeaderboard, setHighlightLeaderboard] = useState(false);
+
   const agent = useAgent<AgentState>({
     agent: "ChatAgent",
     name: session,
@@ -88,6 +97,20 @@ function Workspace({
 
   const setModel = (model: ModelKey) => void agent.call("setModel", [model]);
 
+  const totalAttackHits = Object.values(state.leaderboard ?? {}).reduce(
+    (sum, count) => sum + count,
+    0,
+  );
+
+  const openLeaderboardFromTop = () => {
+    setArenaOpen(true);
+    setHighlightLeaderboard(true);
+    document
+      .getElementById("live-attack-leaderboard")
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    window.setTimeout(() => setHighlightLeaderboard(false), 2200);
+  };
+
   return (
     <div className="glow flex h-full flex-col">
       <header className="flex items-center gap-3 border-b border-line px-4 py-3 md:px-6">
@@ -103,6 +126,35 @@ function Workspace({
           </p>
         </div>
         <div className="ml-auto flex items-center gap-2">
+          <a
+            href="#live-attack-leaderboard"
+            onClick={(e) => {
+              e.preventDefault();
+              openLeaderboardFromTop();
+            }}
+            className="group flex shrink-0 items-center gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-2.5 py-1.5 text-xs font-semibold text-brand transition hover:border-brand hover:bg-brand/20"
+            title="Open the Live Attack Leaderboard Arena"
+          >
+            <Trophy
+              size={14}
+              weight="fill"
+              className="text-brand transition-transform group-hover:scale-110"
+            />
+            <span className="hidden sm:inline">Live Attack Leaderboard</span>
+            <span className="sm:hidden">Leaderboard</span>
+            <span
+              className={cx(
+                "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-mono text-[10px] font-bold tabular-nums",
+                totalAttackHits > 0
+                  ? "bg-block text-bg"
+                  : "bg-raised text-muted",
+              )}
+            >
+              <Fire size={10} weight="fill" />
+              {totalAttackHits}
+            </span>
+          </a>
+
           <span
             className={cx(
               "h-2 w-2 rounded-full",
@@ -147,7 +199,7 @@ function Workspace({
               tab === t ? "border-b-2 border-brand text-ink" : "text-muted",
             )}
           >
-            {t === "trace" ? `Trace (${state.traces.length})` : t}
+            {t === "trace" ? `Guardrails & Trace (${state.traces.length})` : t}
           </button>
         ))}
       </nav>
@@ -219,6 +271,12 @@ function Workspace({
             <SidebarExtras
               state={state}
               call={(method, args) => agent.call(method, args)}
+              onLaunchAttack={(prompt) => {
+                setTab("chat");
+                void send(prompt);
+              }}
+              onOpenArena={() => setArenaOpen(true)}
+              highlighted={highlightLeaderboard}
             />
             <TracePanel
               traces={state.traces}
@@ -227,6 +285,17 @@ function Workspace({
           </div>
         </div>
       </main>
+
+      <LiveAttackLeaderboardModal
+        open={arenaOpen}
+        onClose={() => setArenaOpen(false)}
+        state={state}
+        onLaunchAttack={(prompt) => {
+          setTab("chat");
+          void send(prompt);
+        }}
+        onReset={() => void agent.call("resetStats", [])}
+      />
     </div>
   );
 }
