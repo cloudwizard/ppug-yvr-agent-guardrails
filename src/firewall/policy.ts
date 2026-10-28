@@ -102,6 +102,32 @@ export function evaluateInput(
   return { verdict: "allow", action: "allow", reasons: [] };
 }
 
+/**
+ * CHECKPOINT 3: Escalation ladder.
+ * True when clef-flash sees a borderline threat (between `reviewAt` and `blockAt`)
+ * without any threat already crossing `blockAt`, prompting a second opinion from `clef`.
+ */
+export function needsEscalation(
+  answers: InputAnswers,
+  policy: FirewallPolicy,
+): boolean {
+  const threats = [
+    ...THREATS.map((k) => answers[k].noul),
+    answers.intent.probabilities.attack ?? 0,
+    answers.pii_shared.noul,
+  ];
+  if (threats.some((p) => p >= policy.blockAt)) return false;
+  return threats.some((p) => p >= policy.reviewAt);
+}
+
+/** Extract distinct attack category names from formatted firewall reasons (e.g. "jailbreak 94%"). */
+export function extractAttackCategories(reasons: readonly string[]): string[] {
+  const categories = reasons
+    .map((r) => r.trim().split(/\s+/)[0] ?? "")
+    .filter((c) => Boolean(c) && c !== "risk");
+  return categories.length > 0 ? [...new Set(categories)] : ["policy_flag"];
+}
+
 /** Text of the most recent user message in a model transcript. */
 export function lastUserText(messages: readonly ModelMessage[]): string {
   for (let i = messages.length - 1; i >= 0; i--) {

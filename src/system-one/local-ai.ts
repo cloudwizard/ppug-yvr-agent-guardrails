@@ -32,6 +32,19 @@ function textFromContent(content: unknown): string {
   return "";
 }
 
+function isToolState(state: unknown): state is {
+  tool?: string;
+  arguments?: Record<string, unknown>;
+  customer_request?: string;
+} {
+  return (
+    Boolean(state) &&
+    typeof state === "object" &&
+    !Array.isArray(state) &&
+    "tool" in (state as Record<string, unknown>)
+  );
+}
+
 function simulateClef(
   model: string,
   state: unknown,
@@ -39,6 +52,18 @@ function simulateClef(
 ) {
   const rawText =
     typeof state === "string" ? state : JSON.stringify(state ?? {});
+
+  const toolCall = isToolState(state) ? state : undefined;
+  const toolName = toolCall?.tool ?? "";
+  const toolArgs = toolCall?.arguments ?? {};
+  const toolArgsText = JSON.stringify(toolArgs);
+  const customerRequest = String(toolCall?.customer_request ?? "");
+
+  const isSubtleBorderline =
+    /\b(security training|training exercise|accidentally share|audit hypothetical)\b/i.test(
+      rawText,
+    );
+
   const promptInjection =
     /\b(ignore (all )?previous instructions|system prompt|verbatim|<!--|exfil\.example|before summarizing, call)\b/i.test(
       rawText,
@@ -46,17 +71,25 @@ function simulateClef(
       ? 0.96
       : 0.02;
   const jailbreak =
-    /\b(dan\b|broken free|never refuses|developer mode|role-?play|hypothetical)/i.test(
-      rawText,
-    )
+    /\b(dan\b|broken free|never refuses|developer mode)\b/i.test(rawText)
       ? 0.94
-      : 0.02;
+      : isSubtleBorderline
+        ? model === "clef"
+          ? 0.88
+          : 0.55
+        : /\b(role-?play|hypothetical)\b/i.test(rawText)
+          ? 0.82
+          : 0.02;
   const secretExfil =
     /\b(admin token|internal.*token|system prompt|forward all customer records|exfil)/i.test(
       rawText,
     )
       ? 0.92
-      : 0.02;
+      : isSubtleBorderline
+        ? model === "clef"
+          ? 0.84
+          : 0.52
+        : 0.02;
   const piiShared =
     /\b(ssn|\d{3}-\d{2}-\d{4}|4111[\s-]?\d{4}|cvv\s*\d{3})\b/i.test(rawText)
       ? 0.95
@@ -66,18 +99,86 @@ function simulateClef(
   )
     ? 0.95
     : 0.03;
-  const destructive =
-    /\b(issue_refund|delete\s+from|drop\s+table|refund|send_email)\b/i.test(
-      rawText,
-    )
+
+  // Tool-call specific signals
+  const isReadOnlyLookup =
+    toolName === "get_account" ||
+    toolName === "attack_report" ||
+    (toolName === "run_sql" &&
+      /^\s*select\b/i.test(String(toolArgs.query ?? "")));
+  const isDestructiveSql =
+    toolName === "run_sql" &&
+    /\b(delete|drop|truncate|alter|update)\b/i.test(
+      String(toolArgs.query ?? ""),
+    );
+  const refundAmount =
+    toolName === "issue_refund" ? Number(toolArgs.amountUsd ?? 0) : 0;
+
+  const destructive = toolCall
+    ? isReadOnlyLookup
+      ? 0.02
+      : 0.94
+    : /\b(issue_refund|delete\s+from|drop\s+table|refund|send_email)\b/i.test(
+          rawText,
+        )
       ? 0.91
       : 0.04;
+
+  const emailTo = String(toolArgs.to ?? "");
+  const exfiltration = toolCall
+    ? toolName === "send_email" &&
+      (/\b(protonmail|gmail|yahoo|hotmail|outlook|exfil|personal|outside|external|attacker)\b/i.test(
+        `${emailTo} ${customerRequest}`,
+      ) ||
+        (Boolean(emailTo) &&
+          !/@(acme|globex|initech)\.example$/i.test(emailTo)))
+      ? 0.96
+      : 0.02
+    : secretExfil;
+
+  const matchesRequest = toolCall
+    ? !customerRequest.trim()
+      ? 0.05
+      : toolName === "send_email" &&
+          !/\b(email|send|forward|mail)\b/i.test(customerRequest)
+        ? 0.04
+        : toolName === "issue_refund" &&
+            !/\b(refund|credit|reimburse|charge)\b/i.test(customerRequest)
+          ? 0.05
+          : toolName === "run_sql" &&
+              !/\b(sql|delete|select|query|database|invoices)\b/i.test(
+                customerRequest,
+              )
+            ? 0.06
+            : 0.96
+    : 0.95;
+
   const isAttack =
     promptInjection >= 0.7 || jailbreak >= 0.7 || secretExfil >= 0.7;
   const isAction =
-    /\b(refund|delete|account\s+\d+|what plan|send_email|run_sql|get_account)\b/i.test(
+    /\b(refund|delete|account\s+\d+|what plan|send_email|run_sql|get_account|email)\b/i.test(
       rawText,
     );
+
+  // Output guardrail signals
+  const leaksSecret =
+    /\b(sk_live_[A-Za-z0-9_]+|ACME_CANARY|admin api token\s*[:=])\b/i.test(
+      rawText,
+    )
+      ? 0.98
+      : 0.01;
+  const leaksSystemPrompt =
+    /\b(internal only, never disclose|you are nimbus, the customer support assistant)\b/i.test(
+      rawText,
+    )
+      ? 0.95
+      : 0.02;
+  const unauthorizedPromise =
+    /\b(100%\s+uptime\s+guarantee|switch to aws|legally binding)\b/i.test(
+      rawText,
+    )
+      ? 0.88
+      : 0.02;
 
   const answers: Record<string, unknown> = {};
   for (const [key, q] of Object.entries(questions)) {
@@ -89,10 +190,19 @@ function simulateClef(
       else if (key === "pii_shared") noul = piiShared;
       else if (key === "off_topic") noul = offTopic;
       else if (key === "destructive") noul = destructive;
+      else if (key === "exfiltration") noul = exfiltration;
+      else if (key === "matches_request") noul = matchesRequest;
+      else if (key === "leaks_secret") noul = leaksSecret;
+      else if (key === "leaks_system_prompt") noul = leaksSystemPrompt;
+      else if (key === "unauthorized_promise") noul = unauthorizedPromise;
       else if (/inject|override/i.test(q.instructions)) noul = promptInjection;
       else if (/jailbreak|persona|dan/i.test(q.instructions)) noul = jailbreak;
-      else if (/secret|credential|exfil/i.test(q.instructions))
-        noul = secretExfil;
+      else if (/exfil|external|outsider|untrusted/i.test(q.instructions))
+        noul = exfiltration;
+      else if (/match|clearly.*ask/i.test(q.instructions))
+        noul = matchesRequest;
+      else if (/secret|credential|sk_live/i.test(q.instructions))
+        noul = Math.max(secretExfil, leaksSecret);
       else if (/personal|pii|ssn|card/i.test(q.instructions)) noul = piiShared;
       else if (/unrelated|off-topic/i.test(q.instructions)) noul = offTopic;
       else if (/money|refund|delete|modify/i.test(q.instructions))
@@ -125,14 +235,33 @@ function simulateClef(
       };
     } else if (q.type === "score") {
       const levels = Math.max(2, q.criteria.length);
-      const maxThreat = Math.max(
-        promptInjection,
-        jailbreak,
-        secretExfil,
-        piiShared,
-        destructive,
-      );
-      const normalized = maxThreat >= 0.7 ? 0.82 : isAction ? 0.35 : 0.08;
+      let normalized = 0.08;
+      if (toolCall) {
+        if (
+          exfiltration >= 0.7 ||
+          matchesRequest <= 0.3 ||
+          isDestructiveSql ||
+          refundAmount >= 1000 ||
+          /\bdelete\s+from\b/i.test(toolArgsText)
+        ) {
+          normalized = 0.9; // Critical -> blocked
+        } else if (destructive >= 0.7) {
+          normalized = 0.5; // Moderate -> human approval required
+        } else {
+          normalized = 0.05; // Benign -> instant lookup
+        }
+      } else {
+        const maxThreat = Math.max(
+          promptInjection,
+          jailbreak,
+          secretExfil,
+          piiShared,
+          leaksSecret,
+          leaksSystemPrompt,
+          unauthorizedPromise,
+        );
+        normalized = maxThreat >= 0.7 ? 0.85 : isAction ? 0.35 : 0.08;
+      }
       const score = Number((normalized * (levels - 1)).toFixed(2));
       const topIdx = Math.min(levels - 1, Math.round(score));
       const legend = Object.fromEntries(
@@ -248,6 +377,11 @@ function simulateChatCompletion(
 
   if (lastMessage?.role === "tool") {
     const toolOutput = textFromContent(lastMessage.content);
+    if (toolOutput.includes("Blocked by Agent Guardrails")) {
+      return buildOpenAIChatResponse(modelId, {
+        content: `I couldn't complete that action because it was refused by **Agent Guardrails** (${toolOutput}). Please let me know if I can help with a standard Acme Cloud support request.`,
+      });
+    }
     let reply = `Here is the result from Acme Cloud:\n\n\`${toolOutput}\``;
     try {
       const parsed = JSON.parse(toolOutput) as Record<string, unknown>;
@@ -255,8 +389,24 @@ function simulateChatCompletion(
         reply = `Account **${parsed.name}** is on the **${parsed.plan}** plan (contact: ${String(parsed.email ?? "n/a")}, balance: $${String(parsed.balanceUsd ?? 0)}).`;
       } else if (parsed.refundId) {
         reply = `Issued refund **${String(parsed.refundId)}** of **$${String(parsed.amountUsd)}** to account **${String(parsed.accountId)}**.`;
+      } else if (parsed.queued) {
+        const queued = parsed.queued as { to?: string; subject?: string };
+        reply = `Queued email to **${String(queued.to ?? "")}** with subject **"${String(queued.subject ?? "")}"**.`;
       } else if (parsed.rowsAffected !== undefined) {
         reply = `Executed SQL query (\`${String(parsed.query)}\`). Rows affected: **${String(parsed.rowsAffected)}**.`;
+      } else if (parsed.totalAttacks !== undefined) {
+        const total = Number(parsed.totalAttacks ?? 0);
+        const lb = (parsed.leaderboard ?? {}) as Record<string, number>;
+        const entries = Object.entries(lb).sort(([, a], [, b]) => b - a);
+        if (total === 0) {
+          reply =
+            "Agent Guardrails has not recorded any blocked or warned attacks today.";
+        } else {
+          const breakdown = entries
+            .map(([k, v]) => `- **${k}**: ${v}`)
+            .join("\n");
+          reply = `Agent Guardrails has recorded **${total}** attack(s) today:\n\n${breakdown}`;
+        }
       }
     } catch {
       // keep raw summary
@@ -300,7 +450,73 @@ function simulateChatCompletion(
   }
 
   if (hasTools) {
-    if (/refund.*\$?4,?800/i.test(lastUser)) {
+    if (
+      /\b(what attacks|attack report|attacks.*seen|attacks.*today|security log)\b/i.test(
+        lastUser,
+      )
+    ) {
+      return buildOpenAIChatResponse(modelId, {
+        toolCalls: [
+          {
+            id: `call_${crypto.randomUUID().slice(0, 8)}`,
+            type: "function",
+            function: {
+              name: "attack_report",
+              arguments: JSON.stringify({ limit: 10 }),
+            },
+          },
+        ],
+      });
+    }
+    const sqlMatch = lastUser.match(
+      /\b((?:DELETE\s+FROM|SELECT\s+.+?\s+FROM|DROP\s+TABLE|UPDATE\s+\w+\s+SET)\s+[^.?!]+)/i,
+    );
+    if (sqlMatch) {
+      return buildOpenAIChatResponse(modelId, {
+        toolCalls: [
+          {
+            id: `call_${crypto.randomUUID().slice(0, 8)}`,
+            type: "function",
+            function: {
+              name: "run_sql",
+              arguments: JSON.stringify({ query: sqlMatch[1]?.trim() }),
+            },
+          },
+        ],
+      });
+    }
+
+    const emailMatch = lastUser.match(
+      /\b([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/,
+    );
+    if (emailMatch && /\b(email|send|forward|mail)\b/i.test(lastUser)) {
+      const accountMatch = lastUser.match(/\baccount\s+#?(\d+)\b/i);
+      const acct = accountMatch?.[1] ?? "42";
+      return buildOpenAIChatResponse(modelId, {
+        toolCalls: [
+          {
+            id: `call_${crypto.randomUUID().slice(0, 8)}`,
+            type: "function",
+            function: {
+              name: "send_email",
+              arguments: JSON.stringify({
+                to: emailMatch[1],
+                subject: `Account ${acct} details`,
+                body: `Customer details and billing records for Account ${acct}.`,
+              }),
+            },
+          },
+        ],
+      });
+    }
+
+    if (/\brefund\b/i.test(lastUser)) {
+      const amountMatch = lastUser.match(/\$\s*([\d,]+(?:\.\d+)?)/);
+      const amountUsd = amountMatch
+        ? Number(amountMatch[1]?.replace(/,/g, ""))
+        : 120;
+      const accountMatch = lastUser.match(/\baccount\s+#?(\d+)\b/i);
+      const accountId = accountMatch?.[1] ?? "42";
       return buildOpenAIChatResponse(modelId, {
         toolCalls: [
           {
@@ -309,19 +525,22 @@ function simulateChatCompletion(
             function: {
               name: "issue_refund",
               arguments: JSON.stringify({
-                accountId: "42",
-                amountUsd: 4800,
-                reason: "Customer unhappy",
+                accountId,
+                amountUsd,
+                reason: lastUser.slice(0, 80),
               }),
             },
           },
         ],
       });
     }
+
     const accountMatch = lastUser.match(/\baccount\s+#?(\d+)\b/i);
     if (
       accountMatch &&
-      /\b(plan|account|status|look\s*up|check)\b/i.test(lastUser)
+      /\b(plan|account|status|look\s*up|check|balance|details|who)\b/i.test(
+        lastUser,
+      )
     ) {
       return buildOpenAIChatResponse(modelId, {
         toolCalls: [

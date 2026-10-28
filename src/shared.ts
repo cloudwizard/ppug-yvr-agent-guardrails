@@ -85,6 +85,7 @@ export type AgentState = {
   traces: DecisionTrace[];
   policy: FirewallPolicy;
   stats: FirewallStats;
+  leaderboard: Record<string, number>;
 };
 
 export const DEFAULT_POLICY: FirewallPolicy = {
@@ -98,5 +99,6 @@ export const INITIAL_STATE: AgentState = {
   traces: [],
   policy: DEFAULT_POLICY,
   stats: { checked: 0, blocked: 0, warned: 0 },
+  leaderboard: {},
 };
 export const MAX_TRACES = 40;

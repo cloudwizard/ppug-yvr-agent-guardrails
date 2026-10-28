@@ -1,0 +1,21 @@
+import type { ChatResponseResult } from "@cloudflare/think";
+import { evaluateOutput, OUTPUT_QUESTIONS } from "./firewall/output-guard";
+
+override async onChatResponse(result: ChatResponseResult): Promise<void> {
+  if (result.status !== "completed" || !this.state.policy.enabled) return;
+  const reply = result.message.parts
+    .map((p) => (p.type === "text" ? p.text : ""))
+    .join("\n")
+    .trim();
+  if (!reply) return;
+  const policy = this.state.policy;
+  const { answers } = await this.decideTraced(
+    { model: "clef-flash", state: reply, questions: OUTPUT_QUESTIONS },
+    { step: "Output guardrail", verdict: (a) => evaluateOutput(a, policy).verdict },
+  );
+  const outcome = evaluateOutput(answers, policy);
+  if (outcome.verdict === "allow") return;
+  await this.deliverNotice({
+    markdown: `**Agent Guardrails** flagged the previous reply (${outcome.reasons.join(", ")}).`,
+  });
+}
