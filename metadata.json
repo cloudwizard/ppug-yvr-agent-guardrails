@@ -1,0 +1,5 @@
+{
+  "name": "Agent Guardrails",
+  "description": "Clef-flash screens every prompt, tool call and reply in milliseconds.",
+  "requestFramePermissions": []
+}

@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite dev",
-    "start": "vite dev",
+    "dev": "vite dev --port 3000 --host 0.0.0.0",
+    "start": "vite dev --port 3000 --host 0.0.0.0",
     "build": "vite build",
     "deploy": "vite build && wrangler deploy",
     "types": "wrangler types env.d.ts --include-runtime false",

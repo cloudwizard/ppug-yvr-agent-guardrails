@@ -24,6 +24,7 @@ import {
   type ExtractInput,
   type ExtractResult,
 } from "../system-one/clairic";
+import { createLocalAi } from "../system-one/local-ai";
 import {
   appendTrace,
   buildTrace,
@@ -58,11 +59,21 @@ export abstract class SystemOneAgent extends Think<Env, AgentState> {
   /** System identity for the LLM. */
   abstract soul(): string;
 
+  protected get ai(): Ai {
+    return createLocalAi(
+      this.env as unknown as {
+        AI?: Ai;
+        CLOUDFLARE_API_TOKEN?: string;
+        CLOUDFLARE_ACCOUNT_ID?: string;
+      },
+    );
+  }
+
   override getModel() {
     const key: ModelKey =
       this.state.model in MODELS ? this.state.model : INITIAL_STATE.model;
     const ai = createAI({
-      binding: this.env.AI,
+      binding: this.ai,
       id: this.env.AI_GATEWAY_ID,
       metadata: { app: this.appSlug, model: key },
     });
@@ -118,7 +129,7 @@ export abstract class SystemOneAgent extends Think<Env, AgentState> {
     input: DecideInput<Q>,
     trace: TraceOptions<ClefAnswers<Q>>,
   ): Promise<DecideResult<Q>> {
-    const result = await decide(this.env.AI, input, {
+    const result = await decide(this.ai, input, {
       ...this.gateway,
       metadata: { ...this.gateway.metadata, step: trace.step },
     });
@@ -142,7 +153,7 @@ export abstract class SystemOneAgent extends Think<Env, AgentState> {
     input: ExtractInput<F>,
     trace: TraceOptions<ClairicAnswers<F>>,
   ): Promise<ExtractResult<F>> {
-    const result = await extract(this.env.AI, input, {
+    const result = await extract(this.ai, input, {
       ...this.gateway,
       metadata: { ...this.gateway.metadata, step: trace.step },
     });
